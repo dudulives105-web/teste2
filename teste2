@@ -1,0 +1,789 @@
+-- Teleport GUI Script
+-- Spawn auto save | TP + Kick automático | Noclip | AntiVoid | Auto-TP no tapa
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
+
+local spawnPosition = nil
+local noclipActive = false
+local noclipConnection = nil
+local kickAfterTP = false
+
+-- ══════════════════════════════════════════
+--  ANTI VOID / PLATAFORMA
+-- ══════════════════════════════════════════
+local antiVoidEnabled  = false
+local antiVoidPlatform = nil
+local antiVoidConnection = nil
+local antiVoidPaused   = false
+
+local VOID_THRESHOLD = -18
+local PLATFORM_SIZE  = Vector3.new(50, 2, 50)
+local PLATFORM_Y     = -13
+
+local function createPlatform(char)
+    if antiVoidPlatform and antiVoidPlatform.Parent then
+        antiVoidPlatform:Destroy()
+    end
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+
+    local part = Instance.new("Part")
+    part.Name          = "AntiVoidPlatform"
+    part.Size          = PLATFORM_SIZE
+    part.Anchored      = true
+    part.CanCollide    = true
+    part.Transparency  = 1
+    part.Material      = Enum.Material.SmoothPlastic
+    part.Color         = Color3.fromRGB(80, 30, 180)
+    part.CastShadow    = false
+    part.CanQuery      = false
+    part.CFrame        = CFrame.new(root.Position.X, PLATFORM_Y, root.Position.Z)
+    part.Parent        = workspace
+
+    antiVoidPlatform = part
+    return part
+end
+
+local function destroyPlatform()
+    if antiVoidPlatform and antiVoidPlatform.Parent then
+        antiVoidPlatform:Destroy()
+    end
+    antiVoidPlatform = nil
+end
+
+local function enableAntiVoid()
+    antiVoidEnabled = true
+    local char = player.Character
+    if char then createPlatform(char) end
+
+    if antiVoidConnection then antiVoidConnection:Disconnect() end
+
+    antiVoidConnection = RunService.Heartbeat:Connect(function()
+        if antiVoidPaused then return end
+
+        local char = player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+
+        if antiVoidPlatform and antiVoidPlatform.Parent then
+            antiVoidPlatform.CFrame = CFrame.new(
+                root.Position.X,
+                PLATFORM_Y,
+                root.Position.Z
+            )
+        end
+
+        if root.Position.Y < VOID_THRESHOLD then
+            root.CFrame = CFrame.new(root.Position.X, PLATFORM_Y + 5, root.Position.Z)
+        end
+    end)
+end
+
+local function disableAntiVoid()
+    antiVoidEnabled = false
+    if antiVoidConnection then
+        antiVoidConnection:Disconnect()
+        antiVoidConnection = nil
+    end
+    destroyPlatform()
+end
+
+-- ══════════════════════════════════════════
+--  AUTO-TP NO TAPA (knockback detector)
+-- ══════════════════════════════════════════
+local tapaTpEnabled       = false
+local tapaConnection      = nil
+local lastVelocity        = Vector3.new(0,0,0)
+local KNOCKBACK_THRESHOLD = 35
+local tapaCooldown        = false
+
+local function startTapaDetector()
+    if tapaConnection then tapaConnection:Disconnect() end
+    lastVelocity = Vector3.new(0,0,0)
+
+    tapaConnection = RunService.Heartbeat:Connect(function()
+        local char = player.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        if tapaCooldown then return end
+
+        local vel       = root.AssemblyLinearVelocity
+        local speed     = Vector3.new(vel.X, 0, vel.Z).Magnitude
+        local prevSpeed = Vector3.new(lastVelocity.X, 0, lastVelocity.Z).Magnitude
+        local delta     = speed - prevSpeed
+
+        if delta > KNOCKBACK_THRESHOLD then
+            tapaCooldown   = true
+            antiVoidPaused = true
+
+            local savedCFrame = root.CFrame
+
+            task.spawn(function()
+                task.wait(0.05)
+                local r = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+                if r then
+                    r.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    r.CFrame = savedCFrame
+                end
+
+                if antiVoidPlatform and antiVoidPlatform.Parent then
+                    antiVoidPlatform.CFrame = CFrame.new(
+                        savedCFrame.Position.X,
+                        PLATFORM_Y,
+                        savedCFrame.Position.Z
+                    )
+                end
+
+                antiVoidPaused = false
+                task.wait(0.4)
+                tapaCooldown = false
+            end)
+        end
+
+        lastVelocity = vel
+    end)
+end
+
+local function stopTapaDetector()
+    if tapaConnection then
+        tapaConnection:Disconnect()
+        tapaConnection = nil
+    end
+    lastVelocity   = Vector3.new(0,0,0)
+    antiVoidPaused = false
+end
+
+-- ========== GUI ==========
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "TeleportGUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = player.PlayerGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 245, 0, 270)
+mainFrame.Position = UDim2.new(1, -265, 0, 20)
+mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+mainFrame.BorderSizePixel = 0
+mainFrame.Active = true
+mainFrame.Draggable = true
+mainFrame.Parent = screenGui
+
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+local mb = Instance.new("UIStroke", mainFrame)
+mb.Color = Color3.fromRGB(50, 50, 50)
+mb.Thickness = 1.5
+
+-- Topbar
+local topBar = Instance.new("Frame", mainFrame)
+topBar.Size = UDim2.new(1, 0, 0, 36)
+topBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+topBar.BorderSizePixel = 0
+Instance.new("UICorner", topBar).CornerRadius = UDim.new(0, 8)
+
+local topFix = Instance.new("Frame", topBar)
+topFix.Size = UDim2.new(1, 0, 0, 10)
+topFix.Position = UDim2.new(0, 0, 1, -10)
+topFix.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+topFix.BorderSizePixel = 0
+
+local titleLabel = Instance.new("TextLabel", topBar)
+titleLabel.Text = "🚀 Teleport GUI"
+titleLabel.Size = UDim2.new(1, -40, 1, 0)
+titleLabel.Position = UDim2.new(0, 12, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 14
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local closeBtn = Instance.new("TextButton", topBar)
+closeBtn.Text = "✕"
+closeBtn.Size = UDim2.new(0, 28, 0, 28)
+closeBtn.Position = UDim2.new(1, -32, 0, 4)
+closeBtn.BackgroundColor3 = Color3.fromRGB(180, 30, 30)
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextSize = 12
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.BorderSizePixel = 0
+Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 6)
+
+-- ========== HELPERS ==========
+local function sep(y)
+    local f = Instance.new("Frame", mainFrame)
+    f.Size = UDim2.new(1, -24, 0, 1)
+    f.Position = UDim2.new(0, 12, 0, y)
+    f.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+    f.BorderSizePixel = 0
+end
+
+local function sectionLabel(txt, y)
+    local l = Instance.new("TextLabel", mainFrame)
+    l.Text = txt
+    l.Size = UDim2.new(1, -24, 0, 16)
+    l.Position = UDim2.new(0, 12, 0, y)
+    l.BackgroundTransparency = 1
+    l.TextColor3 = Color3.fromRGB(120, 120, 120)
+    l.TextSize = 10
+    l.Font = Enum.Font.GothamBold
+    l.TextXAlignment = Enum.TextXAlignment.Left
+end
+
+local function makeBtn(txt, y, strokeClr)
+    local btn = Instance.new("TextButton", mainFrame)
+    btn.Text = txt
+    btn.Size = UDim2.new(1, -24, 0, 40)
+    btn.Position = UDim2.new(0, 12, 0, y)
+    btn.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+    btn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    btn.TextSize = 13
+    btn.Font = Enum.Font.GothamSemibold
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
+    local s = Instance.new("UIStroke", btn)
+    s.Color = strokeClr or Color3.fromRGB(55, 55, 55)
+    s.Thickness = 1.5
+    btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(34, 34, 34) end)
+    btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(22, 22, 22) end)
+    return btn, s
+end
+
+local function makeToggle(txt, y)
+    local btn = Instance.new("TextButton", mainFrame)
+    btn.Text = "☐  "..txt
+    btn.Size = UDim2.new(1, -24, 0, 36)
+    btn.Position = UDim2.new(0, 12, 0, y)
+    btn.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    btn.TextColor3 = Color3.fromRGB(150, 150, 150)
+    btn.TextSize = 12
+    btn.Font = Enum.Font.GothamSemibold
+    btn.TextXAlignment = Enum.TextXAlignment.Left
+    btn.BorderSizePixel = 0
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 7)
+    local p = Instance.new("UIPadding", btn)
+    p.PaddingLeft = UDim.new(0, 10)
+    local s = Instance.new("UIStroke", btn)
+    s.Color = Color3.fromRGB(50, 50, 50)
+    s.Thickness = 1.5
+    return btn, s
+end
+
+-- ========== ELEMENTOS ==========
+sep(44)
+sectionLabel("TELEPORT", 52)
+
+local posStatus = Instance.new("TextLabel", mainFrame)
+posStatus.Text = "📍 Spawn: aguardando..."
+posStatus.Size = UDim2.new(1, -24, 0, 16)
+posStatus.Position = UDim2.new(0, 12, 0, 70)
+posStatus.BackgroundTransparency = 1
+posStatus.TextColor3 = Color3.fromRGB(180, 150, 50)
+posStatus.TextSize = 11
+posStatus.Font = Enum.Font.Gotham
+posStatus.TextXAlignment = Enum.TextXAlignment.Left
+
+local tpBtn, tpBtnStroke = makeBtn("🏠  Voltar ao Spawn", 90, Color3.fromRGB(45, 45, 100))
+
+sep(140)
+sectionLabel("NOCLIP", 148)
+local noclipToggle, noclipStroke = makeToggle("Noclip", 166)
+
+local antiVoidToggle, antiVoidStroke = makeToggle("Anti Void (plataforma)", 210)
+
+local avDesc = Instance.new("TextLabel", mainFrame)
+avDesc.Text = "  Cria plataforma invisível embaixo do mapa"
+avDesc.Size = UDim2.new(1, -24, 0, 14)
+avDesc.Position = UDim2.new(0, 12, 0, 248)
+avDesc.BackgroundTransparency = 1
+avDesc.TextColor3 = Color3.fromRGB(90, 90, 90)
+avDesc.TextSize = 10
+avDesc.Font = Enum.Font.Gotham
+avDesc.TextXAlignment = Enum.TextXAlignment.Left
+
+sep(265)
+sectionLabel("AUTO-TP NO TAPA", 273)
+local tapaToggle, tapaStroke = makeToggle("TP automático ao tomar tapa", 291)
+
+local sensLabel = Instance.new("TextLabel", mainFrame)
+sensLabel.Text = "  Sensibilidade (velocidade mín.):"
+sensLabel.Size = UDim2.new(1, -24, 0, 14)
+sensLabel.Position = UDim2.new(0, 12, 0, 331)
+sensLabel.BackgroundTransparency = 1
+sensLabel.TextColor3 = Color3.fromRGB(90, 90, 90)
+sensLabel.TextSize = 10
+sensLabel.Font = Enum.Font.Gotham
+sensLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local sensBox = Instance.new("TextBox", mainFrame)
+sensBox.Text = tostring(KNOCKBACK_THRESHOLD)
+sensBox.PlaceholderText = "35"
+sensBox.Size = UDim2.new(0, 80, 0, 28)
+sensBox.Position = UDim2.new(0, 12, 0, 347)
+sensBox.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+sensBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+sensBox.TextSize = 12
+sensBox.Font = Enum.Font.GothamSemibold
+sensBox.BorderSizePixel = 0
+sensBox.ClearTextOnFocus = false
+Instance.new("UICorner", sensBox).CornerRadius = UDim.new(0, 7)
+local sensStroke = Instance.new("UIStroke", sensBox)
+sensStroke.Color = Color3.fromRGB(50, 50, 50)
+sensStroke.Thickness = 1.5
+
+local sensApply = Instance.new("TextButton", mainFrame)
+sensApply.Text = "✔ Aplicar"
+sensApply.Size = UDim2.new(0, 120, 0, 28)
+sensApply.Position = UDim2.new(0, 100, 0, 347)
+sensApply.BackgroundColor3 = Color3.fromRGB(22, 22, 40)
+sensApply.TextColor3 = Color3.fromRGB(160, 160, 255)
+sensApply.TextSize = 12
+sensApply.Font = Enum.Font.GothamSemibold
+sensApply.BorderSizePixel = 0
+Instance.new("UICorner", sensApply).CornerRadius = UDim.new(0, 7)
+local sensApplyStroke = Instance.new("UIStroke", sensApply)
+sensApplyStroke.Color = Color3.fromRGB(50, 50, 100)
+sensApplyStroke.Thickness = 1.5
+sensApply.MouseEnter:Connect(function() sensApply.BackgroundColor3 = Color3.fromRGB(34, 34, 60) end)
+sensApply.MouseLeave:Connect(function() sensApply.BackgroundColor3 = Color3.fromRGB(22, 22, 40) end)
+
+sep(385)
+sectionLabel("SPEED", 393)
+
+local speedBox = Instance.new("TextBox", mainFrame)
+speedBox.Text = "50"
+speedBox.PlaceholderText = "Velocidade..."
+speedBox.Size = UDim2.new(0, 90, 0, 34)
+speedBox.Position = UDim2.new(0, 12, 0, 411)
+speedBox.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+speedBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+speedBox.TextSize = 13
+speedBox.Font = Enum.Font.GothamSemibold
+speedBox.BorderSizePixel = 0
+speedBox.ClearTextOnFocus = false
+Instance.new("UICorner", speedBox).CornerRadius = UDim.new(0, 7)
+local speedBoxStroke = Instance.new("UIStroke", speedBox)
+speedBoxStroke.Color = Color3.fromRGB(50, 50, 50)
+speedBoxStroke.Thickness = 1.5
+
+local speedToggle = Instance.new("TextButton", mainFrame)
+speedToggle.Text = "▶ Ativar"
+speedToggle.Size = UDim2.new(0, 125, 0, 34)
+speedToggle.Position = UDim2.new(0, 108, 0, 411)
+speedToggle.BackgroundColor3 = Color3.fromRGB(22, 22, 22)
+speedToggle.TextColor3 = Color3.fromRGB(220, 220, 220)
+speedToggle.TextSize = 12
+speedToggle.Font = Enum.Font.GothamSemibold
+speedToggle.BorderSizePixel = 0
+Instance.new("UICorner", speedToggle).CornerRadius = UDim.new(0, 7)
+local speedToggleStroke = Instance.new("UIStroke", speedToggle)
+speedToggleStroke.Color = Color3.fromRGB(50, 50, 80)
+speedToggleStroke.Thickness = 1.5
+speedToggle.MouseEnter:Connect(function() speedToggle.BackgroundColor3 = Color3.fromRGB(34, 34, 34) end)
+speedToggle.MouseLeave:Connect(function() speedToggle.BackgroundColor3 = Color3.fromRGB(22, 22, 22) end)
+
+sep(455)
+sectionLabel("ANTI-DETECÇÃO", 463)
+local kickToggle, kickStroke = makeToggle("Kick automático após TP", 479)
+
+sep(523)
+sectionLabel("BRAINROT", 531)
+local brainrotTpToggle, brainrotTpStroke = makeToggle("TP ao spawn ao pegar brainrot", 549)
+-- ► NOVO: kick exclusivo para o TP de brainrot
+local brainrotKickToggle, brainrotKickStroke = makeToggle("Kick automático após TP brainrot", 593)
+
+-- Ajusta altura total do frame
+mainFrame.Size = UDim2.new(0, 245, 0, 645)
+
+-- ========== LÓGICA ==========
+
+closeBtn.MouseButton1Click:Connect(function()
+    disableAntiVoid()
+    stopTapaDetector()
+    screenGui:Destroy()
+end)
+
+local speedActive = false
+local currentSpeed = 50
+local defaultSpeed = 16
+
+local function onCharacterAdded(char)
+    local root = char:WaitForChild("HumanoidRootPart", 10)
+    if root then
+        task.wait(0.1)
+        spawnPosition = root.CFrame
+        posStatus.Text = "📍 Spawn salvo ✔"
+        posStatus.TextColor3 = Color3.fromRGB(80, 200, 80)
+        tpBtnStroke.Color = Color3.fromRGB(70, 70, 200)
+    end
+    if noclipActive then
+        setNoclip(false)
+        task.wait(0.1)
+        setNoclip(true)
+    end
+    if speedActive then
+        local hum = char:WaitForChild("Humanoid", 5)
+        if hum then hum.WalkSpeed = currentSpeed end
+    end
+    if antiVoidEnabled then
+        task.wait(0.2)
+        createPlatform(char)
+    end
+    if tapaTpEnabled then
+        task.wait(0.2)
+        startTapaDetector()
+    end
+end
+
+-- TP para spawn + kick automático (toggle geral) se ativado
+tpBtn.MouseButton1Click:Connect(function()
+    local char = player.Character
+    if char and spawnPosition then
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if root then
+            root.CFrame = spawnPosition
+            root.CFrame = spawnPosition
+            if kickAfterTP then
+                task.wait(0.3)
+                player:Kick("Desconectado.")
+            end
+        end
+    else
+        tpBtnStroke.Color = Color3.fromRGB(180, 50, 50)
+        task.delay(1, function() tpBtnStroke.Color = Color3.fromRGB(45, 45, 100) end)
+    end
+end)
+
+-- Noclip
+function setNoclip(state)
+    noclipActive = state
+    if state then
+        noclipToggle.Text = "☑  Noclip"
+        noclipToggle.TextColor3 = Color3.fromRGB(100, 220, 255)
+        noclipStroke.Color = Color3.fromRGB(50, 130, 200)
+        noclipToggle.BackgroundColor3 = Color3.fromRGB(10, 18, 28)
+        noclipConnection = RunService.Stepped:Connect(function()
+            local char = player.Character
+            if char then
+                for _, p in ipairs(char:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide = false end
+                end
+            end
+        end)
+    else
+        noclipToggle.Text = "☐  Noclip"
+        noclipToggle.TextColor3 = Color3.fromRGB(150, 150, 150)
+        noclipStroke.Color = Color3.fromRGB(50, 50, 50)
+        noclipToggle.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+        if noclipConnection then
+            noclipConnection:Disconnect()
+            noclipConnection = nil
+        end
+        local char = player.Character
+        if char then
+            for _, p in ipairs(char:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = true end
+            end
+        end
+    end
+end
+
+noclipToggle.MouseButton1Click:Connect(function()
+    setNoclip(not noclipActive)
+end)
+
+antiVoidToggle.MouseButton1Click:Connect(function()
+    antiVoidEnabled = not antiVoidEnabled
+    if antiVoidEnabled then
+        antiVoidToggle.Text = "☑  Anti Void (plataforma)"
+        antiVoidToggle.TextColor3 = Color3.fromRGB(160, 100, 255)
+        antiVoidStroke.Color = Color3.fromRGB(100, 50, 220)
+        antiVoidToggle.BackgroundColor3 = Color3.fromRGB(14, 10, 28)
+        enableAntiVoid()
+    else
+        antiVoidToggle.Text = "☐  Anti Void (plataforma)"
+        antiVoidToggle.TextColor3 = Color3.fromRGB(150, 150, 150)
+        antiVoidStroke.Color = Color3.fromRGB(50, 50, 50)
+        antiVoidToggle.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+        disableAntiVoid()
+    end
+end)
+
+tapaToggle.MouseButton1Click:Connect(function()
+    tapaTpEnabled = not tapaTpEnabled
+    if tapaTpEnabled then
+        tapaToggle.Text = "☑  TP automático ao tomar tapa"
+        tapaToggle.TextColor3 = Color3.fromRGB(255, 160, 60)
+        tapaStroke.Color = Color3.fromRGB(200, 100, 30)
+        tapaToggle.BackgroundColor3 = Color3.fromRGB(28, 18, 10)
+        startTapaDetector()
+    else
+        tapaToggle.Text = "☐  TP automático ao tomar tapa"
+        tapaToggle.TextColor3 = Color3.fromRGB(150, 150, 150)
+        tapaStroke.Color = Color3.fromRGB(50, 50, 50)
+        tapaToggle.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+        stopTapaDetector()
+    end
+end)
+
+sensApply.MouseButton1Click:Connect(function()
+    local v = tonumber(sensBox.Text)
+    if v and v > 0 then
+        KNOCKBACK_THRESHOLD = math.clamp(v, 5, 300)
+        sensBox.Text = tostring(KNOCKBACK_THRESHOLD)
+        if tapaTpEnabled then
+            stopTapaDetector()
+            startTapaDetector()
+        end
+        sensApplyStroke.Color = Color3.fromRGB(50, 180, 80)
+        task.delay(1, function() sensApplyStroke.Color = Color3.fromRGB(50, 50, 100) end)
+    else
+        sensApplyStroke.Color = Color3.fromRGB(180, 50, 50)
+        task.delay(1, function() sensApplyStroke.Color = Color3.fromRGB(50, 50, 100) end)
+    end
+end)
+
+speedToggle.MouseButton1Click:Connect(function()
+    speedActive = not speedActive
+    local val = tonumber(speedBox.Text)
+    if not val or val <= 0 then val = 50 end
+    currentSpeed = math.clamp(val, 1, 500)
+
+    if speedActive then
+        speedToggle.Text = "⏹ Desativar"
+        speedToggleStroke.Color = Color3.fromRGB(80, 180, 80)
+        speedToggle.TextColor3 = Color3.fromRGB(100, 255, 100)
+        local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = currentSpeed end
+    else
+        speedToggle.Text = "▶ Ativar"
+        speedToggleStroke.Color = Color3.fromRGB(50, 50, 80)
+        speedToggle.TextColor3 = Color3.fromRGB(220, 220, 220)
+        local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = defaultSpeed end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if speedActive then
+        local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+        if hum and hum.WalkSpeed ~= currentSpeed then
+            hum.WalkSpeed = currentSpeed
+        end
+    end
+end)
+
+kickToggle.MouseButton1Click:Connect(function()
+    kickAfterTP = not kickAfterTP
+    if kickAfterTP then
+        kickToggle.Text = "☑  Kick automático após TP"
+        kickToggle.TextColor3 = Color3.fromRGB(255, 90, 90)
+        kickStroke.Color = Color3.fromRGB(200, 50, 50)
+        kickToggle.BackgroundColor3 = Color3.fromRGB(28, 12, 12)
+    else
+        kickToggle.Text = "☐  Kick automático após TP"
+        kickToggle.TextColor3 = Color3.fromRGB(150, 150, 150)
+        kickStroke.Color = Color3.fromRGB(50, 50, 50)
+        kickToggle.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    end
+end)
+
+-- ══════════════════════════════════════════
+--  TP AO SPAWN AO PEGAR BRAINROT
+-- ══════════════════════════════════════════
+local brainrotTpEnabled  = false
+-- ► NOVO: flag de kick exclusiva para brainrot
+local brainrotKickEnabled = false
+
+local brainrotConnection = nil
+
+local BRAINROT_KEYS = {
+    "strawberry","elephant","dragon","cannelloni","vacca","saturno",
+    "saturnita","chicleteira","bicicleteira","nuclearo","dinossauro",
+    "meowl","skibidi","toilet","brainrot","tralalero","bombardiro",
+    "tung","bombombini","lirili","frigo","glorbo","capuchino","trippi",
+    "crocodilo","sahur",
+}
+
+local function isBrainrotItem(name)
+    name = name:lower()
+    for _, k in ipairs(BRAINROT_KEYS) do
+        if name:find(k, 1, true) then return true end
+    end
+    return false
+end
+
+local tpCooldown = false
+
+-- ► MODIFICADO: após o TP, aplica kick de brainrot se ativado
+local function doTpToSpawn()
+    if tpCooldown then return end
+    if not spawnPosition then return end
+    tpCooldown = true
+
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = spawnPosition
+    end
+
+    -- Kick exclusivo do brainrot (independente do kickAfterTP geral)
+    if brainrotKickEnabled then
+        task.wait(0.3)
+        player:Kick("Desconectado.")
+        return  -- após kick não precisa resetar cooldown
+    end
+
+    task.delay(1.5, function() tpCooldown = false end)
+end
+
+local function isWeldedToChar(obj, char)
+    for _, desc in ipairs(obj:GetDescendants()) do
+        if desc:IsA("WeldConstraint") or desc:IsA("Weld") then
+            local p0, p1 = desc.Part0, desc.Part1
+            if p0 and p1 then
+                if p0:IsDescendantOf(char) or p1:IsDescendantOf(char) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+local watchConnections = {}
+
+local function startBrainrotDetector()
+    for _, c in ipairs(watchConnections) do c:Disconnect() end
+    watchConnections = {}
+
+    if brainrotConnection then brainrotConnection:Disconnect() end
+
+    local function watchChar(char)
+        if not char then return end
+        local c1 = char.ChildAdded:Connect(function(obj)
+            if not brainrotTpEnabled then return end
+            task.wait(0.05)
+            if isBrainrotItem(obj.Name) then
+                print("[BrainrotTP] No char:", obj.Name)
+                doTpToSpawn()
+            end
+        end)
+        local c2 = char.DescendantAdded:Connect(function(obj)
+            if not brainrotTpEnabled then return end
+            if isBrainrotItem(obj.Name) then
+                print("[BrainrotTP] Descendente no char:", obj.Name)
+                doTpToSpawn()
+            end
+        end)
+        table.insert(watchConnections, c1)
+        table.insert(watchConnections, c2)
+    end
+
+    local function watchBackpack()
+        local bp = player:FindFirstChild("Backpack") or player:WaitForChild("Backpack", 5)
+        if not bp then return end
+        local c = bp.ChildAdded:Connect(function(obj)
+            if not brainrotTpEnabled then return end
+            if isBrainrotItem(obj.Name) then
+                print("[BrainrotTP] No backpack:", obj.Name)
+                doTpToSpawn()
+            end
+        end)
+        table.insert(watchConnections, c)
+    end
+
+    brainrotConnection = task.spawn(function()
+        while brainrotTpEnabled do
+            task.wait(0.2)
+            if not brainrotTpEnabled then break end
+            if tpCooldown then continue end
+
+            local char = player.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            if not char or not root then continue end
+
+            for _, obj in ipairs(workspace:GetChildren()) do
+                if obj == char then continue end
+                local part = obj:IsA("BasePart") and obj
+                    or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")))
+                if not part then continue end
+
+                local ok, dist = pcall(function()
+                    return (root.Position - part.Position).Magnitude
+                end)
+                if not ok then continue end
+
+                if dist < 5 then
+                    if isBrainrotItem(obj.Name) then
+                        print("[BrainrotTP] Próximo workspace:", obj.Name, dist)
+                        doTpToSpawn()
+                        break
+                    elseif isWeldedToChar(obj, char) then
+                        print("[BrainrotTP] Welded ao char:", obj.Name)
+                        doTpToSpawn()
+                        break
+                    end
+                end
+            end
+        end
+    end)
+
+    watchChar(player.Character)
+    watchBackpack()
+
+    local rc = player.CharacterAdded:Connect(function(char)
+        task.wait(0.5)
+        watchChar(char)
+    end)
+    table.insert(watchConnections, rc)
+end
+
+local function stopBrainrotDetector()
+    brainrotTpEnabled = false
+    for _, c in ipairs(watchConnections) do c:Disconnect() end
+    watchConnections = {}
+    brainrotConnection = nil
+end
+
+brainrotTpToggle.MouseButton1Click:Connect(function()
+    brainrotTpEnabled = not brainrotTpEnabled
+    if brainrotTpEnabled then
+        brainrotTpToggle.Text = "☑  TP ao spawn ao pegar brainrot"
+        brainrotTpToggle.TextColor3 = Color3.fromRGB(100, 255, 160)
+        brainrotTpStroke.Color = Color3.fromRGB(40, 180, 80)
+        brainrotTpToggle.BackgroundColor3 = Color3.fromRGB(10, 24, 14)
+        startBrainrotDetector()
+    else
+        brainrotTpToggle.Text = "☐  TP ao spawn ao pegar brainrot"
+        brainrotTpToggle.TextColor3 = Color3.fromRGB(150, 150, 150)
+        brainrotTpStroke.Color = Color3.fromRGB(50, 50, 50)
+        brainrotTpToggle.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+        stopBrainrotDetector()
+    end
+end)
+
+-- ► NOVO: toggle de kick exclusivo para brainrot
+brainrotKickToggle.MouseButton1Click:Connect(function()
+    brainrotKickEnabled = not brainrotKickEnabled
+    if brainrotKickEnabled then
+        brainrotKickToggle.Text = "☑  Kick automático após TP brainrot"
+        brainrotKickToggle.TextColor3 = Color3.fromRGB(255, 90, 90)
+        brainrotKickStroke.Color = Color3.fromRGB(200, 50, 50)
+        brainrotKickToggle.BackgroundColor3 = Color3.fromRGB(28, 12, 12)
+    else
+        brainrotKickToggle.Text = "☐  Kick automático após TP brainrot"
+        brainrotKickToggle.TextColor3 = Color3.fromRGB(150, 150, 150)
+        brainrotKickStroke.Color = Color3.fromRGB(50, 50, 50)
+        brainrotKickToggle.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    end
+end)
+
+-- Inicia
+player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then
+    onCharacterAdded(player.Character)
+end
+
+print("[Teleport GUI] Carregado!")
